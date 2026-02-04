@@ -1,7 +1,8 @@
+streamlit>=1.40.0
+tensorflow>=2.17.0
 pandas
 numpy
-tensorflow
-scikit-learn
-streamlit
 plotly
+scikit-learn
 joblib
+protobuf==3.20.3
