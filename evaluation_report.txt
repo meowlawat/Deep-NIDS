@@ -1,0 +1,12 @@
+# Deep-NIDS: AI-Powered Network Intrusion Detection
+
+## 1. Feature Engineering & PCA Strategy
+**Why Principal Component Analysis (PCA)?**
+The NSL-KDD dataset contains 41 features per connection. Many of these are redundant or highly correlated (e.g., `num_root` and `num_compromised`). Training a Deep Learning model on high-dimensional noise leads to:
+1.  **Overfitting:** The model memorizes noise instead of patterns.
+2.  **Slow Training:** More inputs = more weights to update.
+
+**Solution:**
+I applied **PCA (Principal Component Analysis)** to reduce the dimensionality from **41 features down to 10**.
+-   **Variance Retained:** These top 10 components capture >90% of the information (variance) in the dataset.
+-   **Impact:** This compresses the attack surface, forcing the model to learn the "essence" of the traffic rather than specific, brittle rules.
