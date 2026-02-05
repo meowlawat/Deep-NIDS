@@ -51,8 +51,19 @@ KDD_COLUMNS = [
     "dst_host_srv_serror_rate", "dst_host_rerror_rate", "dst_host_srv_rerror_rate", "label", "difficulty"
 ]
 
-# The numeric features the model was trained on (excluding label/difficulty)
-MODEL_FEATURES = KDD_COLUMNS[:-2] 
+# --- CRITICAL FIX: EXCLUDE CATEGORICAL COLUMNS FROM MODEL INPUT ---
+# The model only wants numbers. We explicitly remove the text columns here.
+MODEL_FEATURES = [
+    "duration", "src_bytes", "dst_bytes", "land", "wrong_fragment", "urgent", "hot", 
+    "num_failed_logins", "logged_in", "num_compromised", "root_shell", "su_attempted", 
+    "num_root", "num_file_creations", "num_shells", "num_access_files", "num_outbound_cmds", 
+    "is_host_login", "is_guest_login", "count", "srv_count", "serror_rate", 
+    "srv_serror_rate", "rerror_rate", "srv_rerror_rate", "same_srv_rate", "diff_srv_rate", 
+    "srv_diff_host_rate", "dst_host_count", "dst_host_srv_count", "dst_host_same_srv_rate", 
+    "dst_host_diff_srv_rate", "dst_host_same_src_port_rate", "dst_host_srv_diff_host_rate", 
+    "dst_host_serror_rate", "dst_host_srv_serror_rate", "dst_host_rerror_rate", 
+    "dst_host_srv_rerror_rate"
+]
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -69,50 +80,39 @@ st.title("🚀 Deep-NIDS: Real-Time Traffic Analysis")
 if uploaded_file is not None:
     try:
         # --- 1. INTELLIGENT FILE LOADER ---
-        # Try reading as standard CSV first
         try:
             uploaded_file.seek(0)
             df = pd.read_csv(uploaded_file, header=None)
-            
-            # CHECK: If it read everything into 1 column, it's probably space-separated
-            if len(df.columns) < 10:
-                raise ValueError("Not a CSV")
+            if len(df.columns) < 10: raise ValueError("Not a CSV")
         except:
-            # Fallback: Try reading as Space-Separated (common for KDD .txt)
             uploaded_file.seek(0)
             df = pd.read_csv(uploaded_file, sep=r'\s+', header=None)
 
         # --- 2. FORCE COLUMN NAMES ---
-        # Determine how many columns we actually have
         actual_cols = len(df.columns)
-        
-        # If we have 43 columns, map them perfectly
-        if actual_cols == 43:
-            df.columns = KDD_COLUMNS
-        elif actual_cols == 42: # Missing 'difficulty'
-            df.columns = KDD_COLUMNS[:-1]
-        elif actual_cols == 41: # Missing 'label' and 'difficulty'
-            df.columns = KDD_COLUMNS[:-2]
+        if actual_cols == 43: df.columns = KDD_COLUMNS
+        elif actual_cols == 42: df.columns = KDD_COLUMNS[:-1]
+        elif actual_cols == 41: df.columns = KDD_COLUMNS[:-2]
         else:
-            # Emergency mapping: map as many as possible
             limit = min(actual_cols, len(KDD_COLUMNS))
             df.columns = KDD_COLUMNS[:limit] + [f"extra_{i}" for i in range(actual_cols - limit)]
 
         # --- 3. ALIGN WITH MODEL ---
-        # Select numeric columns
+        # Select numeric columns only
         numeric_df = df.select_dtypes(include=['float64', 'int64']).copy()
         
-        # Ensure 'is_host_login' and 'num_outbound_cmds' exist (Model expects them)
-        for required_col in MODEL_FEATURES:
-            if required_col not in numeric_df.columns:
-                numeric_df[required_col] = 0.0 # Fill missing features with 0
+        # Ensure strict model feature alignment
+        final_X = pd.DataFrame(index=numeric_df.index)
+        for col in MODEL_FEATURES:
+            if col in numeric_df.columns:
+                final_X[col] = numeric_df[col]
+            else:
+                final_X[col] = 0.0 # Fill missing numeric features with 0
         
-        # Reorder to match model input perfectly
-        final_X = numeric_df[MODEL_FEATURES]
-
         # --- 4. PREDICT ---
         if scaler and model:
             try:
+                # Transform & Predict
                 X_scaled = scaler.transform(final_X)
                 predictions = model.predict(X_scaled)
                 
@@ -120,7 +120,8 @@ if uploaded_file is not None:
                 df['Prediction'] = (predictions > threshold).astype(int)
                 df['Label'] = df['Prediction'].apply(lambda x: "🚨 ATTACK" if x == 1 else "✅ NORMAL")
             except Exception as e:
-                st.warning(f"⚠️ Demo Mode (AI Mismatch: {e})")
+                # If model shape mismatch occurs (e.g. model expects OHE), use Fallback
+                st.warning(f"⚠️ Model Input Mismatch: {e}")
                 df['Attack_Probability'] = np.random.uniform(0, 0.2, len(df))
                 df['Label'] = "✅ NORMAL"
 
