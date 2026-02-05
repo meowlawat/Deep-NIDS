@@ -210,9 +210,8 @@ if uploaded_file is not None:
             )
             st.plotly_chart(fig_live, use_container_width=True)
 
-except Exception as e:
+    except Exception as e:
         st.error(f"Critical Error: {e}")
 
 else:
     st.info("Waiting for Network Log Upload...")
-
