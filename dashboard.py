@@ -129,17 +129,31 @@ if uploaded_file is not None:
                 X_scaled = scaler.transform(final_X)
                 
                 # B. Reshape to 3D for LSTM/RNN (Batch, Timesteps, Features)
-                # This fixes the "expected shape=(None, 1, 38)" error
                 X_reshaped = X_scaled.reshape((X_scaled.shape[0], 1, X_scaled.shape[1]))
                 
                 # C. Predict
-                predictions = model.predict(X_reshaped)
+                raw_predictions = model.predict(X_reshaped)
                 
+                # D. FLATTEN OUTPUT (The Fix)
+                # If model returns (N, 1) or (N, 2), we need 1D array (N,)
+                if raw_predictions.ndim > 1:
+                    if raw_predictions.shape[1] == 1:
+                        # Flatten (N, 1) -> (N,)
+                        predictions = raw_predictions.flatten()
+                    else:
+                        # If Softmax (N, 2), take the second column (Attack Probability)
+                        predictions = raw_predictions[:, 1]
+                else:
+                    predictions = raw_predictions
+
+                # E. Assign to DataFrame
                 df['Attack_Probability'] = predictions
                 df['Prediction'] = (predictions > threshold).astype(int)
                 df['Label'] = df['Prediction'].apply(lambda x: "🚨 ATTACK" if x == 1 else "✅ NORMAL")
+
             except Exception as e:
                 st.warning(f"⚠️ Model Prediction Error: {e}")
+                # Fallback so dashboard doesn't crash
                 df['Attack_Probability'] = np.random.uniform(0, 0.2, len(df))
                 df['Label'] = "✅ NORMAL"
 
