@@ -216,6 +216,3 @@ except Exception as e:
 else:
     st.info("Waiting for Network Log Upload...")
 
-else:
-    st.info("Waiting for Network Log Upload...")s
-
