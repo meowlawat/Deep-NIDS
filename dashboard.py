@@ -39,7 +39,6 @@ def load_resources():
 model, scaler = load_resources()
 
 # --- CONSTANTS ---
-# 1. Full KDD Column Map (43 columns)
 KDD_COLUMNS = [
     "duration", "protocol_type", "service", "flag", "src_bytes", "dst_bytes", "land", 
     "wrong_fragment", "urgent", "hot", "num_failed_logins", "logged_in", "num_compromised", 
@@ -52,8 +51,7 @@ KDD_COLUMNS = [
     "dst_host_srv_serror_rate", "dst_host_rerror_rate", "dst_host_srv_rerror_rate", "label", "difficulty"
 ]
 
-# 2. Model Feature List (The exact 41 numeric columns the Scaler expects)
-# We exclude 'label' and 'difficulty'
+# The numeric features the model was trained on (excluding label/difficulty)
 MODEL_FEATURES = KDD_COLUMNS[:-2] 
 
 # --- SIDEBAR ---
@@ -61,7 +59,7 @@ with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/9103/9103246.png", width=100)
     st.title("🛡️ Control Panel")
     st.markdown("---")
-    uploaded_file = st.file_uploader("Upload Network Log (CSV/TXT)", type=['csv', 'txt'])
+    uploaded_file = st.file_uploader("Upload Network Log", type=['csv', 'txt'])
     threshold = st.slider("Anomaly Threshold", 0.0, 1.0, 0.5, 0.05)
     st.info("System Status: **ONLINE**")
 
@@ -70,58 +68,63 @@ st.title("🚀 Deep-NIDS: Real-Time Traffic Analysis")
 
 if uploaded_file is not None:
     try:
-        # 1. SMART LOAD (Force headers if missing)
-        # We read the first line to check if it's a header or data
-        df_test = pd.read_csv(uploaded_file, nrows=1, header=None)
-        
-        # If the first cell is a number (like '0' or '0.0'), it has NO header
-        first_val = str(df_test.iloc[0,0])
-        if first_val.replace('.','').isdigit():
+        # --- 1. INTELLIGENT FILE LOADER ---
+        # Try reading as standard CSV first
+        try:
+            uploaded_file.seek(0)
             df = pd.read_csv(uploaded_file, header=None)
-            # Force apply KDD names
-            if len(df.columns) == len(KDD_COLUMNS):
-                 df.columns = KDD_COLUMNS
-            elif len(df.columns) == 42: # Sometimes difficulty is missing
-                 df.columns = KDD_COLUMNS[:-1]
-            else:
-                 # Best effort mapping
-                 limit = min(len(df.columns), len(KDD_COLUMNS))
-                 df.columns = KDD_COLUMNS[:limit] + [f"extra_{i}" for i in range(len(df.columns) - limit)]
-        else:
-            # It has headers
-            df = pd.read_csv(uploaded_file)
+            
+            # CHECK: If it read everything into 1 column, it's probably space-separated
+            if len(df.columns) < 10:
+                raise ValueError("Not a CSV")
+        except:
+            # Fallback: Try reading as Space-Separated (common for KDD .txt)
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file, sep=r'\s+', header=None)
 
-        # 2. STRICT ALIGNMENT (The Fix)
-        # Create a clean dataframe with ONLY the columns the model needs
+        # --- 2. FORCE COLUMN NAMES ---
+        # Determine how many columns we actually have
+        actual_cols = len(df.columns)
+        
+        # If we have 43 columns, map them perfectly
+        if actual_cols == 43:
+            df.columns = KDD_COLUMNS
+        elif actual_cols == 42: # Missing 'difficulty'
+            df.columns = KDD_COLUMNS[:-1]
+        elif actual_cols == 41: # Missing 'label' and 'difficulty'
+            df.columns = KDD_COLUMNS[:-2]
+        else:
+            # Emergency mapping: map as many as possible
+            limit = min(actual_cols, len(KDD_COLUMNS))
+            df.columns = KDD_COLUMNS[:limit] + [f"extra_{i}" for i in range(actual_cols - limit)]
+
+        # --- 3. ALIGN WITH MODEL ---
+        # Select numeric columns
         numeric_df = df.select_dtypes(include=['float64', 'int64']).copy()
         
-        # Check for missing required columns (like 'is_host_login') and fill them with 0
-        for col in MODEL_FEATURES:
-            if col not in numeric_df.columns:
-                # If column is missing in upload but needed by model, fill with 0
-                numeric_df[col] = 0.0
+        # Ensure 'is_host_login' and 'num_outbound_cmds' exist (Model expects them)
+        for required_col in MODEL_FEATURES:
+            if required_col not in numeric_df.columns:
+                numeric_df[required_col] = 0.0 # Fill missing features with 0
         
-        # Force the exact order the scaler expects
-        # (This drops 'label', 'difficulty', and any garbage columns)
+        # Reorder to match model input perfectly
         final_X = numeric_df[MODEL_FEATURES]
 
-        # 3. PREDICT
+        # --- 4. PREDICT ---
         if scaler and model:
             try:
-                # Transform & Predict
                 X_scaled = scaler.transform(final_X)
                 predictions = model.predict(X_scaled)
                 
                 df['Attack_Probability'] = predictions
                 df['Prediction'] = (predictions > threshold).astype(int)
                 df['Label'] = df['Prediction'].apply(lambda x: "🚨 ATTACK" if x == 1 else "✅ NORMAL")
-            
             except Exception as e:
-                st.warning(f"⚠️ Visualization Mode (AI Error: {e})")
+                st.warning(f"⚠️ Demo Mode (AI Mismatch: {e})")
                 df['Attack_Probability'] = np.random.uniform(0, 0.2, len(df))
                 df['Label'] = "✅ NORMAL"
 
-        # 4. DASHBOARD VISUALS (KPIs)
+        # --- 5. DASHBOARD METRICS ---
         total_packets = len(df)
         total_attacks = len(df[df['Label'] == "🚨 ATTACK"]) if 'Label' in df.columns else 0
         attack_rate = (total_attacks / total_packets) * 100 if total_packets > 0 else 0
@@ -134,7 +137,7 @@ if uploaded_file is not None:
         
         st.markdown("---")
 
-        # 5. GRAPHS
+        # --- 6. VISUALIZATIONS ---
         c1, c2 = st.columns([2, 1])
         with c1:
             st.subheader("📊 Traffic Classification")
@@ -148,14 +151,14 @@ if uploaded_file is not None:
                 fig_bar = px.bar(df['protocol_type'].value_counts().reset_index(), x='protocol_type', y='count')
                 st.plotly_chart(fig_bar, use_container_width=True)
 
-        # 6. LIVE MONITOR
-        st.subheader("📈 Live Threat Stream")
+        # --- 7. LIVE MONITOR ---
+        st.subheader("📈 Real-Time Threat Stream")
         df['Packet_Seq'] = df.index
         if 'Attack_Probability' in df.columns:
-            fig_live = px.line(df, x='Packet_Seq', y='Attack_Probability', title="Real-Time Confidence", color_discrete_sequence=['#00cc96'])
+            fig_live = px.line(df, x='Packet_Seq', y='Attack_Probability', title="Network Traffic Anomaly Score", color_discrete_sequence=['#00cc96'])
             attacks = df[df['Label'] == "🚨 ATTACK"]
             if not attacks.empty:
-                fig_live.add_scatter(x=attacks.index, y=attacks['Attack_Probability'], mode='markers', name='Attack', marker=dict(color='red', size=5))
+                fig_live.add_scatter(x=attacks.index, y=attacks['Attack_Probability'], mode='markers', name='Attack', marker=dict(color='red', size=5, symbol='x'))
             st.plotly_chart(fig_live, use_container_width=True)
 
     except Exception as e:
