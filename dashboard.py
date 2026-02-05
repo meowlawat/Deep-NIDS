@@ -125,13 +125,21 @@ if uploaded_file is not None:
         # --- 4. PREDICT ---
         if scaler and model:
             try:
+                # A. Scale the 2D data (Batch, Features)
                 X_scaled = scaler.transform(final_X)
-                predictions = model.predict(X_scaled)
+                
+                # B. Reshape to 3D for LSTM/RNN (Batch, Timesteps, Features)
+                # This fixes the "expected shape=(None, 1, 38)" error
+                X_reshaped = X_scaled.reshape((X_scaled.shape[0], 1, X_scaled.shape[1]))
+                
+                # C. Predict
+                predictions = model.predict(X_reshaped)
+                
                 df['Attack_Probability'] = predictions
                 df['Prediction'] = (predictions > threshold).astype(int)
                 df['Label'] = df['Prediction'].apply(lambda x: "🚨 ATTACK" if x == 1 else "✅ NORMAL")
             except Exception as e:
-                st.warning(f"⚠️ Model Input Mismatch: {e}")
+                st.warning(f"⚠️ Model Prediction Error: {e}")
                 df['Attack_Probability'] = np.random.uniform(0, 0.2, len(df))
                 df['Label'] = "✅ NORMAL"
 
